@@ -1,6 +1,12 @@
 local checks <const> = require 'checks'
 local Protocol = require 'Protocol'
 
+local index = Protocol.index
+local meta = Protocol.meta
+
+local Default = Protocol.Default
+local Final = Protocol.Final
+
 local registrable <const> = Protocol.new(
 --[[
         Registrable class stores its each new instance
@@ -15,17 +21,22 @@ local registrable <const> = Protocol.new(
         -- end,
 
         -- _register = Protocol.table
-        _register = Protocol.Final({})
+        _register = meta.Final.table,
 
-        -- _default_id = Protocol.ClassProperty('__type')
+        -- _default_id = meta.Final('string', function(meta)
+        --     return meta.__type
+        -- end)
         _default_id = function(class)
             checks('table')
             return class.__type
         end,
 
-        -- id = Protocol.Property('string', function() end)
+        -- id = Default('string', function(self)
+        --      return _get_default_id()
+        -- end)
         id = { 'string', function(class) end },
 
+        -- ???
         new = function(class, constructor)
             checks('table', 'function')
             -- print(class.singleton)
@@ -51,12 +62,6 @@ local registrable <const> = Protocol.new(
             end
         end,
 
-        -- return_register = function(class)
-        --     return function()
-        --         return class._register
-        --     end
-        -- end,
-
         -- delete = Protocol.Method(function(id) end)
         delete = function(class)
             return function(id)
@@ -66,7 +71,11 @@ local registrable <const> = Protocol.new(
             end
         end,
 
-        -- reset_count = Protocol.Method(function() end)
+        -- register_count = meta.Final(function(meta)
+        --     local c = 0
+        --     for id, _ in pairs(meta._register) do c = c + 1 end
+        --     return c
+        -- end
         register_count = function(class)
             return function()
                 local c = 0
@@ -75,7 +84,10 @@ local registrable <const> = Protocol.new(
             end
         end,
 
-        -- reset_register = Protocol.Method(function() end)
+        -- reset_register = meta.Final(function(meta)
+        --     meta._register = {}
+        --     collectgarbage()
+        -- end
         reset_register = function(class)
             return function()
                 class._register = {}
@@ -83,7 +95,7 @@ local registrable <const> = Protocol.new(
             end
         end,
 
-        -- delete = Protocol.Method(function() end)
+        -- _get_default_id = meta.Final(
         _get_default_id = function(class)
             return function()
                 checks()
@@ -130,14 +142,5 @@ local registrable <const> = Protocol.new(
         end
 
     })
-
---[[
-    Make Protocol class registrable.
-    (Manually, because Protocol.register
-    is not present yet due to lack of, well,
-    conforming to registrable protocol).
-]]
--- registrable:conform(Protocol)
--- Protocol._register[registrable.id] = registrable
 
 return registrable
