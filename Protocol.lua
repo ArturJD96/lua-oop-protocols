@@ -107,7 +107,6 @@ local CheckType = CheckFactory(function(self, obj, field_name, field_value)
 end)
 
 Protocol.Type = {
-    __type = 'Protocol.InstanceField',
     __call = function(self, expected_type)
         expected_type = self._sanitize(expected_type)
         return CheckType.new(function() return expected_type end)
@@ -147,7 +146,6 @@ local CheckDefault = CheckFactory(function(self, obj, field_name, field_value)
 end)
 
 Protocol.Default = {
-    __type = 'Protocol.InstanceField',
     __call = function(_, default_value)
         if default_value == nil then error(Protocol.errors.NilDefaultError) end
         return CheckDefault.new(function() return default_value end)
@@ -176,7 +174,6 @@ local CheckFinal = CheckFactory(function(self, obj, field_name, field_value)
 end)
 
 Protocol.Final = {
-    __type = 'Protocol.InstanceField',
     __call = function(self, final_value)
         if final_value == nil then error(Protocol.errors.NilFinalError) end
         return CheckFinal.new(function() return final_value end)
