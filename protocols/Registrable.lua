@@ -1,11 +1,10 @@
 local checks <const> = require 'checks'
 local Protocol = require 'Protocol'
 
-local index = Protocol.index
-local meta = Protocol.meta
-
 local Default = Protocol.Default
 local Final = Protocol.Final
+local ClassDefault = Protocol.ClassDefault
+local ClassFinal = Protocol.ClassFinal
 
 local registrable <const> = Protocol.new(
 --[[
@@ -20,21 +19,15 @@ local registrable <const> = Protocol.new(
         --     return class.singleton
         -- end,
 
-        -- _register = Protocol.table
-        _register = meta.Final.table,
+        _register = ClassFinal.table,
 
-        -- _default_id = meta.Final('string', function(meta)
-        --     return meta.__type
-        -- end)
-        _default_id = function(class)
-            checks('table')
+        _default_id = ClassDefault('string', function(class)
             return class.__type
-        end,
+        end),
 
-        -- id = Default('string', function(self)
-        --      return _get_default_id()
-        -- end)
-        id = { 'string', function(class) end },
+        id = Default('string', function(self)
+            return self._get_default_id()
+        end),
 
         -- ???
         new = function(class, constructor)
@@ -63,42 +56,27 @@ local registrable <const> = Protocol.new(
         end,
 
         -- delete = Protocol.Method(function(id) end)
-        delete = function(class)
+        delete = ClassDefault(function(class)
             return function(id)
                 checks('string')
                 assert(class._register[id], 'Cannot delete ' .. id .. '. Object not present in register.')
                 class._register[id] = nil
             end
-        end,
+        end),
 
-        -- register_count = meta.Final(function(meta)
-        --     local c = 0
-        --     for id, _ in pairs(meta._register) do c = c + 1 end
-        --     return c
-        -- end
-        register_count = function(class)
-            return function()
-                local c = 0
-                for id, _ in pairs(class._register) do c = c + 1 end
-                return c
-            end
-        end,
+        register_count = ClassFinal(function(class)
+            local c = 0
+            for id, _ in pairs(class._register) do c = c + 1 end
+            return c
+        end),
 
-        -- reset_register = meta.Final(function(meta)
-        --     meta._register = {}
-        --     collectgarbage()
-        -- end
-        reset_register = function(class)
-            return function()
-                class._register = {}
-                collectgarbage()
-            end
-        end,
+        reset_register = ClassFinal(function(class)
+            class._register = {}
+            collectgarbage()
+        end),
 
-        -- _get_default_id = meta.Final(
-        _get_default_id = function(class)
+        _get_default_id = ClassFinal(function(class)
             return function()
-                checks()
                 --[[
                     Get the next default name for a new registrable object
                     (if it's id is not provided).
@@ -139,7 +117,7 @@ local registrable <const> = Protocol.new(
                 local default_id <const> = _join(class._default_id, separator, tostring(id + 1))
                 return default_id
             end
-        end
+        end)
 
     })
 
