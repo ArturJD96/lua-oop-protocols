@@ -34,8 +34,8 @@ function Protocol.remove_all_protocols(class)
     return class
 end
 
-function Protocol:apply(class, statics)
-    checks('Protocol', 'table', '?table')
+function Protocol:apply(class)
+    checks('Protocol', 'table')
 
     if not class.__protocols then
         class.__protocols = {}
@@ -44,6 +44,9 @@ function Protocol:apply(class, statics)
 
     table.insert(class.__protocols, self)
 
+    -- whenever constructor is called,
+    -- the resulting object is checked
+    -- if it conforms to all the protocols.
     class[self.constructor_name] = function(...)
         local obj <const> = class.__new(...)
         for _, protocol in ipairs(class.__protocols) do
@@ -104,7 +107,7 @@ local CheckType = CheckFactory(function(self, obj, field_name, field_value)
 end)
 
 Protocol.Type = {
-    __type = 'Protocol.Type',
+    __type = 'Protocol.InstanceField',
     __call = function(self, expected_type)
         expected_type = self._sanitize(expected_type)
         return CheckType.new(function() return expected_type end)
@@ -144,7 +147,7 @@ local CheckDefault = CheckFactory(function(self, obj, field_name, field_value)
 end)
 
 Protocol.Default = {
-    __type = 'Protocol.Default',
+    __type = 'Protocol.InstanceField',
     __call = function(_, default_value)
         if default_value == nil then error(Protocol.errors.NilDefaultError) end
         return CheckDefault.new(function() return default_value end)
@@ -173,7 +176,7 @@ local CheckFinal = CheckFactory(function(self, obj, field_name, field_value)
 end)
 
 Protocol.Final = {
-    __type = 'Protocol.Final',
+    __type = 'Protocol.InstanceField',
     __call = function(self, final_value)
         if final_value == nil then error(Protocol.errors.NilFinalError) end
         return CheckFinal.new(function() return final_value end)
