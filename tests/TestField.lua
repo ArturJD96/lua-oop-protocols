@@ -7,6 +7,10 @@ local Default <const> = Protocol.Default
 local Final <const> = Protocol.Final
 local Condition <const> = Protocol.Condition
 
+local ClassType <const> = Protocol.ClassType
+local ClassDefault <const> = Protocol.ClassDefault
+local ClassFinal <const> = Protocol.ClassFinal
+
 ProtocolError = Protocol.errors
 
 local function shallow_copy(tab)
@@ -331,4 +335,72 @@ function TestFinal:test_two_instances_reference_different_new_objects()
     lu.assertFalse(obj1.instance_referencing_different_objects == obj2.instance_referencing_different_objects)
 end
 
-os.exit(lu.LuaUnit.run())
+--[[ Testing: class vs instance method ]]
+
+TestClassCheck = {}
+
+function TestClassCheck:test_field_assignment()
+    -- if table has a .__type field,
+    -- apply all field Checks to instances
+    -- using constructor wrapping;
+    -- otherwise, apply it to class itself.
+
+    local expected_field_value = 'a field value'
+
+    local protocol = Protocol.new({
+        field = Final(expected_field_value)
+    })
+
+    local class <const> = { __type = 'class' }
+    class.__index = class
+    function class.new() return setmetatable({}, class) end
+
+    protocol:apply(class)
+    lu.assertEquals(class.new().field, expected_field_value)
+    lu.assertNil(class.field)
+
+    local struct <const> = {}
+    protocol:apply(struct)
+    lu.assertEquals(struct.field, expected_field_value)
+end
+
+function TestClassCheck:test_class_field_assignment()
+    local expected_class_field_value = 'a class field value'
+
+    local protocol = Protocol.new({
+        class_field = ClassFinal(expected_class_field_value)
+    })
+
+    local class <const> = { __type = 'class' }
+    class.__index = class
+    function class.new() return setmetatable({}, class) end
+
+    protocol:apply(class)
+    lu.assertEquals(class.new().class_field, expected_class_field_value) -- this is unfortunate but happens because of how lua class instances index back to it's prototype.'
+    lu.assertEquals(class.class_field, expected_class_field_value)
+
+    local not_class <const> = {}
+    lu.assertErrorMsgContains(ProtocolError.ClassFieldNotInClassError, protocol.apply, protocol, not_class)
+end
+
+function TestClassCheck:test_class_fields()
+    local class_default_field = 'class default field'
+    local protocol = Protocol.new({
+        class_typed_field = ClassType.string,
+        class_default_field = ClassDefault(class_default_field),
+        class_final_field = ClassFinal('class final field')
+    })
+    local class <const> = { __type = 'class' }
+    class.__index = class
+    function class.new() return setmetatable({}, class) end
+
+    lu.assertErrorMsgContains(ProtocolError.FieldNotImplementedError, protocol.apply, protocol, class)
+
+    class.class_typed_field = 0
+    lu.assertErrorMsgContains(ProtocolError.WrongFieldTypeError, protocol.apply, protocol, class)
+
+    class.class_typed_field = 'string (that was expected!)'
+    protocol:apply(class)
+
+    lu.assertEquals(class.class_default_field, class_default_field)
+end

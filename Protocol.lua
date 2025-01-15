@@ -1,5 +1,8 @@
 local checks <const> = require 'checks'
 
+-- Question: how to define a 'class'?
+-- https://stackoverflow.com/questions/65961478/how-to-mimic-simple-inheritance-with-base-and-child-class-constructors-in-lua-t
+
 local function _type(arg) -- any
     local arg_type <const> = type(arg)
     return (arg_type == 'table' and arg.__type) or arg_type
@@ -15,44 +18,65 @@ function Protocol.new(fields)
     checks('table')
     local self <const> = setmetatable({}, Protocol)
     self.constructor_name = Protocol._default_constructor_name
+    self.constructor_metamethod_name = '__' .. self.constructor_name
     self.fields = fields
     return self
 end
 
-function Protocol:conform(obj)
+function Protocol:conform_table(tab)
     checks('Protocol', 'table')
     for field_name, field_check in pairs(self.fields) do
-        local field = field_check(obj, field_name, obj[field_name])
-        obj[field_name] = field
+        if field_check.class_field then
+            error(Protocol.errors.ClassFieldNotInClassError .. self.constructor_name)
+        end
+        tab[field_name] = field_check(tab, field_name, tab[field_name])
     end
 end
 
-function Protocol.remove_all_protocols(class)
-    class.__protocols = nil
-    class.new = class.__new
-    class.__new = nil
-    return class
+function Protocol:conform_class(class)
+    checks('Protocol', 'table')
+    for field_name, field_check in pairs(self.fields) do
+        if field_check.class_field then
+            class[field_name] = field_check(class, field_name, class[field_name])
+        end
+    end
 end
 
-function Protocol:apply(class)
+function Protocol:conform_instance(instance)
+    checks('Protocol', 'table')
+    for field_name, field_check in pairs(self.fields) do
+        if not field_check.class_field then
+            instance[field_name] = field_check(instance, field_name, instance[field_name])
+        end
+    end
+end
+
+function Protocol:is_class(obj)
+    checks('table')
+    local points_to_itself = (obj.__index == obj)
+    local has_constructor  = obj[self.constructor_name] ~= nil
+    return (points_to_itself and has_constructor)
+end
+
+function Protocol:apply(tab)
     checks('Protocol', 'table')
 
-    if not class.__protocols then
-        class.__protocols = {}
-        class.__new = class.new
-    end
+    if not tab.__protocols then tab.__protocols = {} end
 
-    table.insert(class.__protocols, self)
+    table.insert(tab.__protocols, self)
 
-    -- whenever constructor is called,
-    -- the resulting object is checked
-    -- if it conforms to all the protocols.
-    class[self.constructor_name] = function(...)
-        local obj <const> = class.__new(...)
-        for _, protocol in ipairs(class.__protocols) do
-            protocol:conform(obj)
+    if self:is_class(tab) then
+        self:conform_class(tab)
+        tab[self.constructor_metamethod_name] = tab[self.constructor_metamethod_name] or tab[self.constructor_name]
+        tab[self.constructor_name] = function(...)
+            local obj <const> = tab.__new(...)
+            for _, protocol in ipairs(tab.__protocols) do
+                protocol:conform_instance(obj)
+            end
+            return obj
         end
-        return obj
+    else
+        self:conform_table(tab)
     end
 end
 
@@ -69,6 +93,8 @@ Protocol.errors = {
     FinalFieldReassignedError = 'Protocol final field reassigned when instantiating ',
     CannotInstantiateError =
     'Protocol default/final field error: a field instantiated from class must have a constructor.',
+    ClassFieldNotInClassError =
+    "Protocol error: cannot assign a protocol with class fields to a table not being a class.\nNote: for a table to be recognized as a class, it must have a constructor method (under a name recognized by this protocol) and tables's __index property equaling itself.\nAccepted constructor method name: "
 }
 
 local function CheckFactory(check)
@@ -87,7 +113,7 @@ local function CheckFactory(check)
     return check_class
 end
 
-local CheckType = CheckFactory(function(self, obj, field_name, field_value)
+local check_type_field = function(self, obj, field_name, field_value)
     checks('Check', 'table', 'string', '?')
     local expected_type = self:value_getter(obj)
     if field_value == nil then
@@ -104,7 +130,37 @@ local CheckType = CheckFactory(function(self, obj, field_name, field_value)
             .. 'actual:   ' .. _type(field_value)
         )
     end
-end)
+end
+
+local check_default_field = function(self, obj, field_name, field_value)
+    checks('Check', 'table', 'string', '?')
+    local default_value = self:value_getter(obj)
+    if field_value == nil then
+        return default_value
+    end
+    local expected_type = _type(default_value)
+    if _type(field_value) ~= expected_type then
+        error(Protocol.errors.WrongFieldTypeError
+            .. _type(obj) .. ' instance field "' .. field_name .. '":\n'
+            .. 'expected: ' .. expected_type .. '\n'
+            .. 'actual:   ' .. _type(field_value)
+        )
+    end
+    return field_value
+end
+
+local check_final_field = function(self, obj, field_name, field_value)
+    checks('Check', 'table', 'string', '?')
+    if field_value ~= nil then
+        error(Protocol.errors.FinalFieldReassignedError
+            .. _type(obj) .. ' (final field "' .. field_name .. '")'
+        )
+    else
+        return self:value_getter(obj)
+    end
+end
+
+local CheckType = CheckFactory(check_type_field)
 
 Protocol.Type = {
     __call = function(self, expected_type)
@@ -128,22 +184,7 @@ Protocol.Type = {
 }
 setmetatable(Protocol.Type, Protocol.Type)
 
-local CheckDefault = CheckFactory(function(self, obj, field_name, field_value)
-    checks('Check', 'table', 'string', '?')
-    local default_value = self:value_getter(obj)
-    if field_value == nil then
-        return default_value
-    end
-    local expected_type = _type(default_value)
-    if _type(field_value) ~= expected_type then
-        error(Protocol.errors.WrongFieldTypeError
-            .. _type(obj) .. ' instance field "' .. field_name .. '":\n'
-            .. 'expected: ' .. expected_type .. '\n'
-            .. 'actual:   ' .. _type(field_value)
-        )
-    end
-    return field_value
-end)
+local CheckDefault = CheckFactory(check_default_field)
 
 Protocol.Default = {
     __call = function(_, default_value)
@@ -162,18 +203,12 @@ Protocol.Default = {
 }
 setmetatable(Protocol.Default, Protocol.Default)
 
-local CheckFinal = CheckFactory(function(self, obj, field_name, field_value)
-    checks('Check', 'table', 'string', '?')
-    if field_value ~= nil then
-        error(Protocol.errors.FinalFieldReassignedError
-            .. _type(obj) .. ' (final field "' .. field_name .. '")'
-        )
-    else
-        return self:value_getter(obj)
-    end
-end)
+local CheckFinal = CheckFactory(check_final_field)
 
 Protocol.Final = {
+
+    -- check = CheckFinal,
+
     __call = function(self, final_value)
         if final_value == nil then error(Protocol.errors.NilFinalError) end
         return CheckFinal.new(function() return final_value end)
@@ -189,5 +224,74 @@ Protocol.Final = {
     end
 }
 setmetatable(Protocol.Final, Protocol.Final)
+
+local ClassCheckFactory = function(...)
+    local check_class = CheckFactory(...)
+    check_class.class_field = true
+    return check_class
+end
+
+local CheckClassType = ClassCheckFactory(check_type_field)
+
+Protocol.ClassType = {
+    __call = function(self, expected_type)
+        expected_type = self._sanitize(expected_type)
+        return CheckClassType.new(function() return expected_type end)
+    end,
+
+    _sanitize = function(type_)
+        checks('string|table')
+        if type(type_) == 'table' then
+            return type_.__type or error(Protocol.errors.TypeFormatError)
+        end
+        return type_
+    end,
+
+    number = CheckClassType.new(function() return 'number' end),
+    string = CheckClassType.new(function() return 'string' end),
+    boolean = CheckClassType.new(function() return 'boolean' end),
+    table = CheckClassType.new(function() return 'table' end),
+    method = CheckClassType.new(function() return 'function' end) -- exception!
+}
+setmetatable(Protocol.ClassType, Protocol.ClassType)
+
+local CheckClassDefault = ClassCheckFactory(check_default_field)
+
+Protocol.ClassDefault = {
+    __call = function(_, default_value)
+        if default_value == nil then error(Protocol.errors.NilDefaultError) end
+        return CheckClassDefault.new(function() return default_value end)
+    end,
+
+    table = CheckClassDefault.new(function() return {} end),
+
+    instance = function(class, ...)
+        checks('table')
+        local constructor, args = class[Protocol._default_constructor_name], { ... }
+        if not constructor then error(Protocol.errors.CannotInstantiateError) end
+        return CheckClassDefault.new(function() return constructor(table.unpack(args)) end)
+    end
+}
+setmetatable(Protocol.ClassDefault, Protocol.ClassDefault)
+
+
+local CheckClassFinal = ClassCheckFactory(check_final_field)
+
+Protocol.ClassFinal = {
+    __call = function(self, final_value)
+        if final_value == nil then error(Protocol.errors.NilFinalError) end
+        return CheckClassFinal.new(function() return final_value end)
+    end,
+
+    table = CheckClassFinal.new(function() return {} end),
+
+    instance = function(class, ...)
+        checks('table')
+        local constructor, args = class[Protocol._default_constructor_name], { ... }
+        if not constructor then error(Protocol.errors.CannotInstantiateError) end
+        return CheckClassFinal.new(function() return constructor(table.unpack(args)) end)
+    end
+}
+setmetatable(Protocol.ClassFinal, Protocol.ClassFinal)
 
 return Protocol
