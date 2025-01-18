@@ -26,56 +26,62 @@ local registrable <const> = Protocol.new(
         end),
 
         id = Default('string', function(self)
-            return self._get_default_id()
+            return self.__index._get_default_id()
         end),
 
         -- ???
-        new = function(class, constructor)
-            checks('table', 'function')
-            -- print(class.singleton)
-            local _new = function(...)
-                local obj <const> = constructor(...)
-                if not obj.id then
-                    obj.id = class._get_default_id()
-                end
-                class._register[obj.id] = obj
-                return obj
-            end
-            local get_singleton = function(...)
-                -- for _, unique_object in pairs(class._register) do
-                --     return unique_object
-                -- end
-                return _new
-            end
-            local singleton = get_singleton()
-            if class.singleton then
-                return singleton
-            else
-                return _new
-            end
-        end,
+        -- new = function(class, constructor)
+        --     checks('table', 'function')
+        --     -- print(class.singleton)
+        --     local _new = function(...)
+        --         local obj <const> = constructor(...)
+        --         if not obj.id then
+        --             obj.id = class._get_default_id()
+        --         end
+        --         class._register[obj.id] = obj
+        --         return obj
+        --     end
+        --     local get_singleton = function(...)
+        --         -- for _, unique_object in pairs(class._register) do
+        --         --     return unique_object
+        --         -- end
+        --         return _new
+        --     end
+        --     local singleton = get_singleton()
+        --     if class.singleton then
+        --         return singleton
+        --     else
+        --         return _new
+        --     end
+        -- end,
 
         -- delete = Protocol.Method(function(id) end)
-        delete = ClassDefault(function(class)
+        delete = ClassMethod(function(class)
             return function(id)
                 checks('string')
-                assert(class._register[id], 'Cannot delete ' .. id .. '. Object not present in register.')
+                if not class._register[id] then
+                    error('Cannot delete ' .. id .. '. Object not present in register.')
+                end
                 class._register[id] = nil
             end
         end),
 
-        register_count = ClassFinal(function(class)
-            local c = 0
-            for id, _ in pairs(class._register) do c = c + 1 end
-            return c
+        register_count = ClassMethod(function(class)
+            return function()
+                local c = 0
+                for id, _ in pairs(class._register) do c = c + 1 end
+                return c
+            end
         end),
 
-        reset_register = ClassFinal(function(class)
-            class._register = {}
-            collectgarbage()
+        reset_register = ClassMethod(function(class)
+            return function()
+                class._register = {}
+                collectgarbage()
+            end
         end),
 
-        _get_default_id = ClassFinal(function(class)
+        _get_default_id = ClassMethod(function(class)
             return function()
                 --[[
                     Get the next default name for a new registrable object

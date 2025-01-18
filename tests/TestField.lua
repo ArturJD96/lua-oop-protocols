@@ -335,6 +335,85 @@ function TestFinal:test_two_instances_reference_different_new_objects()
     lu.assertFalse(obj1.instance_referencing_different_objects == obj2.instance_referencing_different_objects)
 end
 
+TestMethod = {}
+
+function TestMethod:test_instance_methods_are_class_properties()
+    local class_with_method = {}
+    class_with_method.__index = class_with_method
+    function class_with_method.new() return setmetatable({}, class_with_method) end
+
+    --[[
+            Final method of the protocol should be implemented
+            when applying protocol. Checking if it is findable in the prototype.
+    ]]
+
+    local protocol = Protocol.new({ method = Method() })
+
+    protocol:apply(class_with_method)
+    local instance = class_with_method.new()
+    lu.assertEquals(instance.method, self.final_implementation_values.method)
+    lu.assertEquals(class_with_method.method, self.final_implementation_values.method)
+end
+
+function TestMethod:test_method_already_implemented()
+    local class = {}
+    class.__index = class
+    function class.new() return setmetatable({}, class) end
+
+    --[[
+            Final method of the protocol should be implemented
+            when applying protocol. Checking if it is findable in the prototype.
+    ]]
+
+    local required_method = Method()
+    local final_method = Method(function(self) return self.type end)
+
+    local protocol_implemented_method = Protocol.new({ implemented_method = required_method() })
+    local protocol_final_method = Protocol.new({ final_method = required_method() })
+
+    lu.assertErrorMsgContains(ProtocolError.MethodNotImplemented, protocol_implemented_method.apply,
+        protocol_implemented_method, class)
+    function class:implemented_method() return self end
+
+    protocol_implemented_method:apply(class) -- should work!
+    function class:final_method() return self end
+
+    lu.assertErrorMsgContains(ProtocolError.FinalMethodAlreadyImplemented, protocol_final_method.apply,
+        protocol_final_method, class)
+    class.final_method = nil
+    protocol_final_method:apply(class)
+    local instance = class.new()
+    lu.assertEquals(instance.implemented_method, class.implemented_method)
+    lu.assertEquals(instance.final_method, class.final_method)
+end
+
+TestClassMethod = {}
+
+function TestClassMethod:test_class_methods()
+    local class_with_class_method = {}
+    class_with_class_method.__index = class_with_class_method
+    function class_with_class_method.new() return setmetatable({}, class_with_class_method) end
+
+    --[[
+            Final method of the protocol should be implemented
+            when applying protocol. Checking if it is findable in the prototype.
+    ]]
+
+    local protocol = Protocol.new({ method = ClassMethod() })
+
+    protocol:apply(class_with_class_method)
+    local instance = class_with_class_method.new()
+    lu.assertEquals(class_with_class_method.method, self.final_implementation_values.method)
+    lu.assertEquals(instance.method, self.final_implementation_values.method) -- this is true, but UNDESIREABLE
+end
+
+--[[
+    Note: Current understanding of classes
+    (that a class is a table that points to itself and has constructor)
+    doesn't allow for an effective static methods (ClassMethod) verification
+    (i.e. static method can be called also from instance. That's a no-no?).'
+]]
+
 --[[ Testing: class vs instance method ]]
 
 TestClassCheck = {}
@@ -398,6 +477,12 @@ function TestClassCheck:test_class_fields()
 
     class.class_typed_field = 0
     lu.assertErrorMsgContains(ProtocolError.WrongFieldTypeError, protocol.apply, protocol, class)
+
+    assert(false, "The test above SOMETIMES fails (lol?) with:"
+        .. "./tests/TestField.lua:XXX: Error message does not contain:"
+        .. '"Protocol type error: wrong field type."'
+        .. 'Error message received:'
+        .. "'./Protocol.lua:XXX: Protocol final field reassigned when instantiating class (final field \"class_final_field\")'")
 
     class.class_typed_field = 'string (that was expected!)'
     protocol:apply(class)

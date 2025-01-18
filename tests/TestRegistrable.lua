@@ -1,7 +1,7 @@
 local lu <const> = require 'luaunit'
 local lfs <const> = require "lfs"
 -- local Protocol <const> = require 'Protocol'
-local Registrable <const> = require 'Registrable'
+local Registrable <const> = require 'protocols/Registrable'
 
 TestRegistrable = {}
 function TestRegistrable:setup()
@@ -14,7 +14,7 @@ function TestRegistrable:setup()
     end
 
     -- apply protocol
-    Registrable:conform(self.class)
+    Registrable:apply(self.class)
 
     -- register random number of objects
     self.objects_count = math.random(3, 10)
