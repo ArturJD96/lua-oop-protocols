@@ -8,6 +8,11 @@ local function _type(arg) -- any
     return (arg_type == 'table' and arg.__type) or arg_type
 end
 
+local function is_callable(arg)
+    local metatable = getmetatable(arg)
+    return (type(arg) == 'function') or (metatable and metatable.__call)
+end
+
 local Protocol = {
     __type = 'Protocol',
     _default_constructor_name = 'new'
@@ -36,7 +41,7 @@ end
 function Protocol:conform_class(class)
     checks('Protocol', 'table')
     for field_name, field_check in pairs(self.fields) do
-        if field_check.class_field then
+        if field_check.class_field or field_check.method_field then
             class[field_name] = field_check(class, field_name, class[field_name])
         end
     end
@@ -45,7 +50,7 @@ end
 function Protocol:conform_instance(instance)
     checks('Protocol', 'table')
     for field_name, field_check in pairs(self.fields) do
-        if not field_check.class_field then
+        if not (field_check.method_field or field_check.class_field) then
             instance[field_name] = field_check(instance, field_name, instance[field_name])
         end
     end
@@ -61,22 +66,66 @@ end
 function Protocol:apply(tab)
     checks('Protocol', 'table')
 
+    --[[ If anything here fails, protocol SHOULD not get assigned! ]]
+
     if not tab.__protocols then tab.__protocols = {} end
+
+    for _, protocol in ipairs(tab.__protocols) do
+        if protocol == self then
+            error('Protocol already implemented.')
+        end
+    end
 
     table.insert(tab.__protocols, self)
 
-    if self:is_class(tab) then
-        self:conform_class(tab)
-        tab[self.constructor_metamethod_name] = tab[self.constructor_metamethod_name] or tab[self.constructor_name]
-        tab[self.constructor_name] = function(...)
-            local obj <const> = tab.__new(...)
-            for _, protocol in ipairs(tab.__protocols) do
-                protocol:conform_instance(obj)
-            end
-            return obj
+    local function conform()
+        -- compare existing fields with protocol added fields
+        local field_names = {}
+        for field_name, field in pairs(self) do
+            table.insert(field_names, field_name)
         end
-    else
-        self:conform_table(tab)
+        --[[
+            Perhaps: first do semantic analysis:
+            – which fields are applied, which are not,
+            which were applied but shouldn't (then raise error)
+            etc...
+
+            This should be done, because if something goes wrong,
+            we can "undo" the applied fields without mistakenly
+            overwriting/removing fields that are correctly assigned
+            from the beginning.
+        ]]
+
+        if self:is_class(tab) then
+            self:conform_class(tab)
+            tab[self.constructor_metamethod_name] = tab[self.constructor_metamethod_name] or tab[self.constructor_name]
+            tab[self.constructor_name] = function(...)
+                local obj <const> = tab.__new(...)
+                for _, protocol in ipairs(tab.__protocols) do
+                    protocol:conform_instance(obj)
+                end
+                return obj
+            end
+        else
+            self:conform_table(tab)
+        end
+    end
+
+    local _, err = pcall(conform)
+
+    if err then
+        -- how to "undo" the conformation?
+        for id, protocol in ipairs(tab.__protocols) do
+            if protocol == self then
+                tab.__protocols[id] = nil
+            end
+        end
+        -- if #self.__protocols == 0 then
+        --     self.__protocols = nil
+        --     self.__new = self.new
+        --     self.__new = nil
+        -- end
+        error(err)
     end
 end
 
@@ -94,7 +143,10 @@ Protocol.errors = {
     CannotInstantiateError =
     'Protocol default/final field error: a field instantiated from class must have a constructor.',
     ClassFieldNotInClassError =
-    "Protocol error: cannot assign a protocol with class fields to a table not being a class.\nNote: for a table to be recognized as a class, it must have a constructor method (under a name recognized by this protocol) and tables's __index property equaling itself.\nAccepted constructor method name: "
+    "Protocol error: cannot assign a protocol with class fields to a table not being a class.\nNote: for a table to be recognized as a class, it must have a constructor method (under a name recognized by this protocol) and tables's __index property equaling itself.\nAccepted constructor method name: ",
+    MethodAlreadyImplemented = "Protocol method field error: method has been already implemented by class.",
+    MethodNotImplemented = "Protocol method field error: method has not been implemented.",
+    WrongMethodType = "Protocol method field error: must be a function or a callable table: "
 }
 
 local function CheckFactory(check)
@@ -105,7 +157,7 @@ local function CheckFactory(check)
     }
     check_class.__index = check_class
     check_class.new = function(value_getter)
-        checks('function')
+        checks('?function|table')
         local self = setmetatable({}, check_class)
         self.value_getter = value_getter
         return self
@@ -157,6 +209,20 @@ local check_final_field = function(self, obj, field_name, field_value)
         )
     else
         return self:value_getter(obj)
+    end
+end
+
+local check_method_field = function(self, obj, field_name, field_value)
+    checks('Check', 'table', 'string', '?')
+    local method = self.value_getter -- passing function directly!
+    if method and field_value then
+        error(Protocol.errors.MethodAlreadyImplemented)
+    elseif not method and not field_value then
+        error(Protocol.errors.MethodNotImplemented)
+    elseif not method and field_value then
+        return field_value
+    elseif method and not field_value then
+        return method
     end
 end
 
@@ -224,6 +290,26 @@ Protocol.Final = {
     end
 }
 setmetatable(Protocol.Final, Protocol.Final)
+
+local MethodCheckFactory = function(...)
+    local check_class = CheckFactory(...)
+    check_class.method_field = true
+    return check_class
+end
+
+local CheckMethod = MethodCheckFactory(check_method_field)
+
+Protocol.Method = {
+
+    __call = function(self, final_method)
+        checks('table', '?function|table')
+        if not (final_method == nil or is_callable(final_method)) then
+            error(Protocol.errors.WrongMethodType)
+        end
+        return CheckMethod.new(final_method)
+    end
+}
+setmetatable(Protocol.Method, Protocol.Method)
 
 local ClassCheckFactory = function(...)
     local check_class = CheckFactory(...)
@@ -293,5 +379,14 @@ Protocol.ClassFinal = {
     end
 }
 setmetatable(Protocol.ClassFinal, Protocol.ClassFinal)
+
+local ClassMethodCheckFactory = function(...)
+    local check_class = CheckFactory(...)
+    check_class.class_field = true
+    check_class.method_field = true
+    return check_class
+end
+
+Protocol.ClassMethod = Protocol.Method
 
 return Protocol
